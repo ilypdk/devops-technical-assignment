@@ -1,0 +1,34 @@
+aws_region = "eu-west-1"
+
+cluster_name       = "eks-karpenter-poc"
+kubernetes_version = "1.36"
+
+availability_zones = [
+  "eu-west-1a",
+  "eu-west-1b",
+  "eu-west-1c"
+]
+
+cluster_endpoint_public_access_cidrs = [
+  "0.0.0.0/0"
+]
+
+access_entries = {}
+
+# Example:
+#
+# access_entries = {
+#   admin = {
+#     principal_arn = "arn:aws:iam::123456789012:role/AdministratorAccess"
+#
+#     policy_associations = {
+#       cluster_admin = {
+#         policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+#
+#         access_scope = {
+#           type = "cluster"
+#         }
+#       }
+#     }
+#   }
+# }

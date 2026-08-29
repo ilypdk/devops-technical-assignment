@@ -1,0 +1,174 @@
+flowchart LR
+    %% External actors
+    USER["Users"]
+    GH["GitHub Actions"]
+
+    %% AWS Organization
+    subgraph AWSORG["AWS Organization"]
+        direction TB
+
+        %% Edge / Global services
+        subgraph EDGE["Global / Edge Services"]
+            direction TB
+            DNS["Route 53"]
+            CF["CloudFront"]
+            WAF["AWS WAF"]
+            ACMEDGE["ACM Certificate<br/>us-east-1"]
+            OAC["Origin Access Control"]
+            S3["Private S3 Bucket<br/>React SPA"]
+        end
+
+        %% Primary region
+        subgraph PRIMARY["Primary Region - eu-west-1"]
+            direction TB
+
+            subgraph VPC["PROD VPC - 3 AZ"]
+                direction LR
+
+                subgraph PUBLIC["Public Subnets"]
+                    direction TB
+                    ALB["Application Load Balancer"]
+                    NAT["NAT Gateways"]
+                end
+
+                subgraph PRIVATE["Private Application Subnets"]
+                    direction TB
+                    EKS["Amazon EKS"]
+                    MNG["Managed Node Group<br/>System / On-Demand"]
+                    KARP["Karpenter<br/>Spot / Graviton / On-Demand"]
+                    API["Flask API Pods<br/>HPA + CPU/Memory Requests & Limits"]
+                    GD["GuardDuty Runtime Agent"]
+                end
+
+                subgraph DATABASE["Isolated Database Subnets"]
+                    direction TB
+                    RDS["RDS PostgreSQL<br/>Multi-AZ HA"]
+                    RR["Read Replica<br/>Analytics / BI"]
+                end
+            end
+
+            ECR["Amazon ECR"]
+
+            subgraph OBS["Observability"]
+                direction TB
+                METRICS["/metrics<br/>Application + Business Metrics"]
+                SM["ServiceMonitor / PodMonitor"]
+                PROM["Prometheus<br/>kube-prometheus-stack"]
+                KSM["kube-state-metrics"]
+                NODEEXP["node-exporter"]
+                ALERTM["Alertmanager"]
+                GRAF["Grafana<br/>App / Business / K8s / AWS Dashboards"]
+                CW["CloudWatch<br/>AWS Metrics / Logs"]
+                ALARMS["CloudWatch Alarms"]
+                SNS["Amazon SNS"]
+            end
+        end
+
+        %% Security account
+        subgraph SECURITY["Security / Audit Account"]
+            direction TB
+            GDC["GuardDuty"]
+            INS["Amazon Inspector"]
+            SH["Security Hub"]
+        end
+
+        %% Log archive account
+        subgraph LOGS["Log Archive Account"]
+            direction TB
+            LOGS3["Central S3 Log Archive"]
+            LIFE["S3 Lifecycle<br/>Standard-IA / Glacier / Deep Archive"]
+        end
+
+        %% DR region
+        subgraph DR["DR Region - us-east-2 / Ohio"]
+            direction TB
+            DRECR["Replicated ECR"]
+            DRRDS["DR RDS<br/>Daily Snapshot Refresh"]
+            DREKS["DR EKS<br/>Created On Demand"]
+            DRARGO["Argo CD"]
+        end
+    end
+
+    %% External tooling
+    subgraph CICD["CI/CD Tooling"]
+        direction TB
+        SONAR["SonarQube"]
+        TRIVY["Trivy<br/>CRITICAL blocks PROD"]
+        ARGO["Argo CD"]
+    end
+
+    subgraph NOTIFY["Notifications"]
+        direction TB
+        CHAT["Slack / Teams"]
+        EMAIL["Email"]
+        ONCALL["PagerDuty / Opsgenie<br/>optional"]
+    end
+
+    %% User traffic
+    USER --> DNS
+    DNS --> CF
+    WAF --> CF
+    ACMEDGE --> CF
+    CF -->|Frontend /*| OAC
+    OAC --> S3
+    CF -->|Backend /api/*| ALB
+
+    %% Application path
+    ALB --> EKS
+    EKS --> API
+    API --> RDS
+    RDS -->|async replication| RR
+
+    %% Node lifecycle
+    MNG -->|hosts controller| KARP
+    KARP -->|provisions worker nodes| EKS
+
+    %% Observability
+    API --> METRICS
+    METRICS --> SM
+    SM --> PROM
+    KSM --> PROM
+    NODEEXP --> PROM
+    PROM --> GRAF
+    PROM --> ALERTM
+    CW --> GRAF
+
+    ALB --> CW
+    EKS --> CW
+    RDS --> CW
+    CF --> CW
+
+    CW --> ALARMS
+    ALARMS --> SNS
+    SNS --> CHAT
+    SNS --> EMAIL
+    SNS --> ONCALL
+    ALERTM --> CHAT
+
+    %% Security
+    GD --> GDC
+    GDC --> SH
+    INS --> SH
+
+    %% CI/CD
+    GH --> SONAR
+    SONAR --> TRIVY
+    TRIVY --> ECR
+    GH --> ARGO
+    ARGO --> EKS
+    GH -. Deploy notifications .-> CHAT
+
+    %% DR
+    ECR -. Cross-Region Replication .-> DRECR
+    RDS -. Daily Snapshot Copy / Restore .-> DRRDS
+    GH -. Terraform DR Deployment .-> DREKS
+    GH -. Bootstrap .-> DRARGO
+    DRARGO --> DREKS
+    DRECR --> DREKS
+    DREKS --> DRRDS
+
+    %% Logging
+    CF -. Access Logs .-> LOGS3
+    ALB -. Access Logs .-> LOGS3
+    CW -. Archive .-> LOGS3
+    LOGS3 --> LIFE
